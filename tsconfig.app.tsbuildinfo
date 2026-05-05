@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/data.ts","./src/main.tsx","./src/components/filters.tsx","./src/components/flashcard.tsx","./src/components/gradebuttons.tsx","./src/components/multiselect.tsx","./src/components/nav.tsx","./src/lib/deck.ts","./src/lib/srs.ts","./src/lib/storage.ts","./src/lib/types.ts"],"version":"5.9.3"}
