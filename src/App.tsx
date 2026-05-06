@@ -5,40 +5,46 @@ import { Flashcard } from "./components/Flashcard";
 import { GradeButtons } from "./components/GradeButtons";
 import { Nav } from "./components/Nav";
 import { buildDeck, shuffle, uniqueSorted } from "./lib/deck";
+import { exportToCsv, importFromCsv } from "./lib/csvIO";
 import { grade, isDue } from "./lib/srs";
-import { loadFilters, loadSrs, resetSrs as clearSrsStorage, saveFilters, saveSrs } from "./lib/storage";
+import { loadCards, loadFilters, loadSrs, resetSrs as clearSrsStorage, saveCards, saveFilters, saveSrs } from "./lib/storage";
 import type { Card, FilterState, SrsState } from "./lib/types";
 
-const ALL_SECTIONS: string[] = uniqueSorted(KANJI_DATA.map((c) => c.section));
+function allSectionsFrom(cards: readonly Card[]): string[] {
+  return uniqueSorted(cards.map((c) => c.section));
+}
 
-const ALL_THEMES: { theme: string; section: string }[] = (() => {
+function allThemesFrom(cards: readonly Card[]): { theme: string; section: string }[] {
   const seen = new Map<string, string>();
-  for (const c of KANJI_DATA) if (!seen.has(c.theme)) seen.set(c.theme, c.section);
+  for (const c of cards) if (!seen.has(c.theme)) seen.set(c.theme, c.section);
   return Array.from(seen, ([theme, section]) => ({ theme, section })).sort(
     (a, b) => a.section.localeCompare(b.section) || a.theme.localeCompare(b.theme),
   );
-})();
+}
 
-const ALL_THEME_NAMES: string[] = ALL_THEMES.map((t) => t.theme);
-
-const DEFAULT_FILTERS: FilterState = {
-  sections: ALL_SECTIONS,
-  themes: ALL_THEME_NAMES,
+// Initialized once at module load — may be custom data from a previous import.
+const INITIAL_CARDS: readonly Card[] = loadCards() ?? KANJI_DATA;
+const INITIAL_SECTIONS = allSectionsFrom(INITIAL_CARDS);
+const INITIAL_THEME_NAMES = allThemesFrom(INITIAL_CARDS).map((t) => t.theme);
+const INITIAL_DEFAULT_FILTERS: FilterState = {
+  sections: INITIAL_SECTIONS,
+  themes: INITIAL_THEME_NAMES,
   dueOnly: false,
 };
 
 // Migrate persisted state. The previous schema used "empty array = all"; the new
 // schema is literal, so blank arrays from older saves get rehydrated to "all".
 function loadInitialFilters(): FilterState {
-  const stored = loadFilters(DEFAULT_FILTERS);
+  const stored = loadFilters(INITIAL_DEFAULT_FILTERS);
   return {
-    sections: stored.sections.length ? stored.sections : ALL_SECTIONS,
-    themes: stored.themes.length ? stored.themes : ALL_THEME_NAMES,
+    sections: stored.sections.length ? stored.sections : INITIAL_SECTIONS,
+    themes: stored.themes.length ? stored.themes : INITIAL_THEME_NAMES,
     dueOnly: !!stored.dueOnly,
   };
 }
 
 export function App() {
+  const [cards, setCards] = useState<readonly Card[]>(INITIAL_CARDS);
   const [srs, setSrs] = useState<SrsState>(loadSrs);
   const [filters, setFilters] = useState<FilterState>(loadInitialFilters);
   const [deck, setDeck] = useState<Card[]>([]);
@@ -46,26 +52,29 @@ export function App() {
   const [flipped, setFlipped] = useState(false);
   const [now, setNow] = useState(() => Date.now());
 
+  const allSections = useMemo(() => allSectionsFrom(cards), [cards]);
+  const allThemes = useMemo(() => allThemesFrom(cards), [cards]);
+
   const inScope = useMemo(() => {
     const ss = new Set(filters.sections);
     const ts = new Set(filters.themes);
-    return KANJI_DATA.filter((c) => ss.has(c.section) && ts.has(c.theme));
-  }, [filters.sections, filters.themes]);
+    return cards.filter((c) => ss.has(c.section) && ts.has(c.theme));
+  }, [cards, filters.sections, filters.themes]);
 
   const dueCount = useMemo(
     () => inScope.reduce((n, c) => n + (isDue(srs[c.kanji], now) ? 1 : 0), 0),
     [inScope, srs, now],
   );
 
-  // Rebuild deck when filters change (not on every grade — that would shuffle the user's position).
+  // Rebuild deck when filters or card data change (not on every grade).
   useEffect(() => {
-    setDeck(buildDeck(KANJI_DATA, filters, srs, Date.now()));
+    setDeck(buildDeck(cards, filters, srs, Date.now()));
     setIndex(0);
     setFlipped(false);
     saveFilters(filters);
     // Intentionally exclude srs from deps.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters]);
+  }, [cards, filters]);
 
   useEffect(() => {
     saveSrs(srs);
@@ -106,7 +115,7 @@ export function App() {
   }
 
   function onResetOrder() {
-    setDeck(buildDeck(KANJI_DATA, filters, srs, Date.now()));
+    setDeck(buildDeck(cards, filters, srs, Date.now()));
     setIndex(0);
     setFlipped(false);
   }
@@ -115,6 +124,28 @@ export function App() {
     if (confirm("Reset all SRS progress? This cannot be undone.")) {
       setSrs({});
       clearSrsStorage();
+    }
+  }
+
+  function onExportCsv() {
+    exportToCsv(cards, srs);
+  }
+
+  async function onImportCsv(file: File) {
+    try {
+      const text = await file.text();
+      const { cards: newCards, srs: newSrs } = importFromCsv(text);
+      const newSections = allSectionsFrom(newCards);
+      const newThemeNames = allThemesFrom(newCards).map((t) => t.theme);
+      const newFilters: FilterState = { sections: newSections, themes: newThemeNames, dueOnly: false };
+      saveCards(newCards);
+      saveSrs(newSrs);
+      saveFilters(newFilters);
+      setCards(newCards);
+      setSrs(newSrs);
+      setFilters(newFilters);
+    } catch (e) {
+      alert(`Import failed: ${e instanceof Error ? e.message : "Unknown error"}`);
     }
   }
 
@@ -146,8 +177,8 @@ export function App() {
       </header>
       <main>
         <Filters
-          allSections={ALL_SECTIONS}
-          allThemes={ALL_THEMES}
+          allSections={allSections}
+          allThemes={allThemes}
           filters={filters}
           onChange={setFilters}
           dueCount={dueCount}
@@ -172,6 +203,8 @@ export function App() {
           onShuffle={onShuffle}
           onResetOrder={onResetOrder}
           onResetSrs={onResetSrs}
+          onExportCsv={onExportCsv}
+          onImportCsv={onImportCsv}
         />
 
         <p className="kbd-hint">

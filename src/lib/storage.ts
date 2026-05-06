@@ -1,7 +1,8 @@
-import type { FilterState, SrsState } from "./types";
+import type { Card, FilterState, SrsState } from "./types";
 
 const SRS_KEY = "nihongo:srs:v1";
 const FILTER_KEY = "nihongo:filters:v1";
+const CARDS_KEY = "nihongo:cards:v1";
 
 function safeParse<T>(raw: string | null, fallback: T): T {
   if (!raw) return fallback;
@@ -30,4 +31,16 @@ export function saveFilters(state: FilterState): void {
 
 export function resetSrs(): void {
   localStorage.removeItem(SRS_KEY);
+}
+
+export function loadCards(): Card[] | null {
+  return safeParse<Card[] | null>(localStorage.getItem(CARDS_KEY), null);
+}
+
+export function saveCards(cards: readonly Card[]): void {
+  localStorage.setItem(CARDS_KEY, JSON.stringify(cards));
+}
+
+export function resetCards(): void {
+  localStorage.removeItem(CARDS_KEY);
 }
